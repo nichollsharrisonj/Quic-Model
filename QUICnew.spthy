@@ -1,0 +1,80 @@
+theory QUICZeroRtt
+begin
+
+builtins: hashing, asymmetric-encryption, diffie-hellman
+functions: kdf/2
+
+
+
+rule CreateServer:
+
+    [Fr(~sks)]
+    --[CreateServer()]->
+    [Identity($S,~sks)]
+    //handle pk later
+
+rule CreateClient:
+    let
+        pks = 'g'^sks
+    in
+    [Fr(~sks),Fr(~cid)]
+    --[CreateClient()]->
+    [!Identity($C,~skc,pks,~cid), Out(pks)]
+
+rule ClientHello:
+    let
+        k1 = kdf(~pks^~y)
+        c1 = aenc(k1,<'message 1'>)
+    in
+    [Fr(~rc),Fr(~y),Identity($C,~skc,pks,~cid)]
+    --[ClientHello()]->
+    [Identity($C,~skc,pks,~cid,~y),Out(~cid,~rc,c1,~y)] //Also not persistent because we need to remember ~y
+
+rule ServerReceieveClientHello:
+    let 
+        D1 = ~y^~sks
+        k1 = kdf(D1,~rc)
+        Xprime = 'g'^~xprime
+    in
+    [Fr(~xprime,~rs),In(~cid,~rc,c1,~y),Identity($S,~sks)] //Identity is not persistent because it will be modified
+    --[RecHello()]
+    [Identity($S,~cid,~sks,D1,k1,~rs)]
+
+rule ServerDeriveAndRespond: //Take Server to new state after using key derivation
+    let
+        D2 = ~y^Xprime 
+        K2 = kdf(D2,~rs)
+        C2 = aenc(k2,<'message 2'>)
+    in
+    [Identity($S,~cid,~sks,D1,k1,~rs)]
+    --[ServRespond()]->
+    [!Identity($S,~cid,~sks,D2,k2,~rs),Out(~cid,rs,C2,~Xprime)] //Persistent
+
+rule ClientReceiveResponse:
+    let 
+        D2=~Xprime^~y
+        K2=kdf(D2,~rs)
+    in
+    [Identity($C,~skc,pks,~cid,~y),In(~cid,rs,C2,~Xprime)] //Persistent
+    --[ClientReceive()]->
+    [!Identity($C,~cid,~skc,pks,D2,k2,~rc)] //Maybe all these don't need to be preserved
+
+rule ClientSendData:
+    [CDT()]
+
+rule ServerSendData:
+    [SDT()]
+
+
+
+
+//ensure that only one server and client are created
+restriction key_exchange_before_data_transfer:
+"All #i #j #k. ClientReceive() @#i & CDT() @#j & SDT() @#k ==> #j > #i & #k > #i
+
+restriction unique_server:
+"All x #i #j. CreateServer() @#i & CreateServer() @#j ==> #i = #j
+
+restriction unique_client:
+"All x #i #j. CreateClient() @#i & CreateClient() @#j ==> #i = #j
+
